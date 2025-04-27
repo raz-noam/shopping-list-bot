@@ -12,16 +12,19 @@ load_dotenv()
 # קבלת טוקן הבוט ממשתנה הסביבה
 BOT_TOKEN = os.getenv('BOT_TOKEN')
 
+# קבלת מזהה המשתמש השני ממשתנה הסביבה
+PARTNER_CHAT_ID = os.getenv('PARTNER_CHAT_ID')
+
 # טעינת רשימת הקניות מהקובץ או יצירת חדשה
-def load_shopping_list(chat_id):
-    filename = f"shopping_list_{chat_id}.json"
+def load_shopping_list():
+    filename = "shared_shopping_list.json"
     if os.path.exists(filename):
         return ShoppingList.load_from_file(filename)
     return ShoppingList()
 
 # שמירת רשימת הקניות לקובץ
-def save_shopping_list(chat_id, shopping_list):
-    filename = f"shopping_list_{chat_id}.json"
+def save_shopping_list(shopping_list):
+    filename = "shared_shopping_list.json"
     shopping_list.save_to_file(filename)
 
 # טעינת קטגוריות קבועות
@@ -98,27 +101,40 @@ def create_delete_categories_keyboard():
 # פונקציה לטיפול בפקודת /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    shopping_list = load_shopping_list(chat_id)
+    shopping_list = load_shopping_list()
     context.user_data['shopping_list'] = shopping_list
     context.user_data['categories'] = load_categories()
     
+    # הוספת הודעה שמציגה את מזהה הצ'אט
+    chat_id_message = f"מזהה הצ'אט שלך הוא: {chat_id}\n\n"
+    
     welcome_message = (
-        "👋 שלום! אני בוט רשימת קניות.\n\n"
+        chat_id_message +
+        "👋 שלום! אני בוט רשימת קניות משותפת.\n\n"
         "אני מבין הודעות טבעיות בעברית:\n\n"
         "• כתוב שם פריט להוספה (למשל: 'חלב' או 'חלב 2')\n"
         "• כתוב 'קניתי' או 'מחק' ואחריו שם הפריט (למשל: 'קניתי חלב' או 'מחק חלב 2')\n"
         "• כתוב 'רשימה' כדי לראות את כל הפריטים\n"
         "• כתוב 'מחק רשימה' כדי לנקות את כל הרשימה\n\n"
-        "אם תנסה להוסיף פריט שכבר קיים, אשאל אותך אם להוסיף אותו בכל זאת!"
+        "אם תנסה להוסיף פריט שכבר קיים, אשאל אותך אם להוסיף אותו בכל זאת!\n\n"
+        "הרשימה משותפת עם בן/בת הזוג שלך!"
     )
     
     await update.message.reply_text(welcome_message)
+
+# פונקציה לשליחת הודעת עדכון למשתמש השני
+async def notify_partner(application, message):
+    if PARTNER_CHAT_ID:
+        try:
+            await application.bot.send_message(chat_id=PARTNER_CHAT_ID, text=message)
+        except Exception as e:
+            print(f"Error sending notification to partner: {str(e)}")
 
 # פונקציה לטיפול בהודעות טקסט
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     text = update.message.text
-    shopping_list = context.user_data.get('shopping_list', load_shopping_list(chat_id))
+    shopping_list = context.user_data.get('shopping_list', load_shopping_list())
     categories = context.user_data.get('categories', load_categories())
     
     try:
@@ -135,13 +151,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # עדכון הקטגוריה בפריט
             shopping_list.add_item(item_name, quantity=1, category=category)
             context.user_data['shopping_list'] = shopping_list
-            save_shopping_list(chat_id, shopping_list)
+            save_shopping_list(shopping_list)
             
             # ניקוי משתנים זמניים
             del context.user_data['current_item']
             del context.user_data['waiting_for_category']
             
-            await update.message.reply_text(f"✅ שמרתי את הקטגוריה של {item_name} כ-{category}")
+            message = f"✅ שמרתי את הקטגוריה של {item_name} כ-{category}"
+            await update.message.reply_text(message)
+            await notify_partner(context.application, f"👤 בן/בת הזוג שלך עדכנ/ה את הקטגוריה של {item_name} ל-{category}")
             return
 
         # בדיקה אם זו פקודה מיוחדת
@@ -160,8 +178,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         elif text.lower() in ['מחק רשימה', 'נקה רשימה', 'אפס רשימה']:
             shopping_list.clear_list()
-            save_shopping_list(chat_id, shopping_list)
-            await update.message.reply_text("✅ הרשימה נוקתה בהצלחה!")
+            save_shopping_list(shopping_list)
+            message = "✅ הרשימה נוקתה בהצלחה!"
+            await update.message.reply_text(message)
+            await notify_partner(context.application, "👤 בן/בת הזוג שלך ניקה את כל הרשימה!")
             return
         
         elif text.lower() in ['קטגוריות', 'הצג קטגוריות', 'הראה קטגוריות']:
@@ -220,8 +240,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     )
                 else:
                     # אם הפריט לא קיים, מוסיף אותו ומבקש קטגוריה
+                    shopping_list.add_item(item_name, quantity)
                     context.user_data['shopping_list'] = shopping_list
-                    save_shopping_list(chat_id, shopping_list)
+                    save_shopping_list(shopping_list)
                     
                     # שמירת הפריט הנוכחי להמשך
                     context.user_data['current_item'] = item_name
@@ -230,7 +251,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     if item_name in categories:
                         category = categories[item_name]
                         shopping_list.add_item(item_name, quantity, category=category)
-                        await update.message.reply_text(f"✅ הוספתי {quantity} {item_name} לרשימה!")
+                        message = f"✅ הוספתי {quantity} {item_name} לרשימה!"
+                        await update.message.reply_text(message)
+                        await notify_partner(context.application, f"👤 בן/בת הזוג שלך הוסיף/ה {quantity} {item_name} לרשימה!")
                     else:
                         await update.message.reply_text(
                             f"✅ הוספתי {quantity} {item_name} לרשימה!\n"
@@ -248,8 +271,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if item_name in shopping_list.items:
                 shopping_list.remove_item(item_name, quantity)
                 context.user_data['shopping_list'] = shopping_list
-                save_shopping_list(chat_id, shopping_list)
-                await update.message.reply_text(f"✅ מחקתי {quantity} {item_name} מהרשימה!")
+                save_shopping_list(shopping_list)
+                message = f"✅ מחקתי {quantity} {item_name} מהרשימה!"
+                await update.message.reply_text(message)
+                await notify_partner(context.application, f"👤 בן/בת הזוג שלך מחק/ה {quantity} {item_name} מהרשימה!")
             else:
                 await update.message.reply_text(f"❌ {item_name} לא נמצא ברשימה")
     
@@ -263,7 +288,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     
     chat_id = update.effective_chat.id
-    shopping_list = context.user_data.get('shopping_list', load_shopping_list(chat_id))
+    shopping_list = context.user_data.get('shopping_list', load_shopping_list())
     categories = context.user_data.get('categories', load_categories())
     
     if query.data.startswith("show_category_"):
@@ -307,7 +332,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             shopping_list.add_item(item_name, current_quantity, category=new_category)
         
         context.user_data['shopping_list'] = shopping_list
-        save_shopping_list(chat_id, shopping_list)
+        save_shopping_list(shopping_list)
         
         await query.message.edit_text(f"✅ שיניתי את הקטגוריה של {item_name} ל-{new_category}")
     
@@ -327,7 +352,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 shopping_list.add_item(item_name, current_quantity)
             
             context.user_data['shopping_list'] = shopping_list
-            save_shopping_list(chat_id, shopping_list)
+            save_shopping_list(shopping_list)
             
             await query.message.edit_text(f"✅ מחקתי את הקטגוריה של {item_name}")
         else:
@@ -341,7 +366,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # הוספת הפריט
         shopping_list.add_item(item_name, quantity)
         context.user_data['shopping_list'] = shopping_list
-        save_shopping_list(chat_id, shopping_list)
+        save_shopping_list(shopping_list)
         
         await query.message.edit_text(f"✅ הוספתי {quantity} {item_name} לרשימה!")
     
@@ -351,6 +376,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     if not BOT_TOKEN:
         print("Error: BOT_TOKEN not found in environment variables")
+        return
+    
+    if not PARTNER_CHAT_ID:
+        print("Error: PARTNER_CHAT_ID not found in environment variables")
         return
         
     application = Application.builder().token(BOT_TOKEN).build()
