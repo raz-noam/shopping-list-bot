@@ -102,7 +102,6 @@ def create_delete_categories_keyboard():
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     shopping_list = load_shopping_list()
-    context.user_data['shopping_list'] = shopping_list
     context.user_data['categories'] = load_categories()
     
     # הוספת הודעה שמציגה את מזהה הצ'אט
@@ -136,14 +135,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text("❌ לא מורשה להשתמש בבוט.")
         return
 
-    # בדיקה אם יש רשימת קניות פעילה
-    if 'shopping_list' not in context.user_data:
-        context.user_data['shopping_list'] = ShoppingList()
-
-    shopping_list = context.user_data['shopping_list']
-    categories = context.user_data.get('categories', load_categories())
-    
     try:
+        # טען תמיד את הרשימה המשותפת מהקובץ
+        shopping_list = load_shopping_list()
+        categories = load_categories()
+
         # בדיקה אם זו תשובה לקטגוריה
         if context.user_data.get('waiting_for_category'):
             item_name = context.user_data['current_item']
@@ -152,11 +148,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             # שמירת הקטגוריה בקבוע
             categories[item_name] = category
             save_categories(categories)
-            context.user_data['categories'] = categories
             
-            # עדכון הקטגוריה בפריט
+            # עדכון הקטגוריה בפריט (ללא הוספה מחדש)
             shopping_list.categories[item_name] = category
-            context.user_data['shopping_list'] = shopping_list
             save_shopping_list(shopping_list)
             
             # ניקוי משתנים זמניים
@@ -231,12 +225,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             # הוספת פריט עם קטגוריה
             if item_name not in shopping_list.items:
                 shopping_list.add_item(item_name, 1)
-                shopping_list.categories[item_name] = category
-                save_shopping_list(shopping_list)
-                message = f"✅ הוספתי {item_name} לרשימה עם הקטגוריה: {category}"
-                await update.message.reply_text(message)
-            else:
-                await update.message.reply_text(f"❌ {item_name} כבר קיים ברשימה")
+            shopping_list.categories[item_name] = category
+            save_shopping_list(shopping_list)
+            message = f"✅ הוספתי {item_name} לרשימה עם הקטגוריה: {category}"
+            await update.message.reply_text(message)
             return
         
         # זיהוי פעולה
@@ -251,10 +243,20 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             item_name = clean_text.replace(str(quantity), '').strip()
             
             if item_name not in shopping_list.items:
-                shopping_list.add_item(item_name, quantity)
-                save_shopping_list(shopping_list)
-                message = f"✅ הוספתי {item_name} לרשימה"
-                await update.message.reply_text(message)
+                # אם יש קטגוריה קבועה, הוסף עם הקטגוריה
+                if item_name in categories:
+                    shopping_list.add_item(item_name, quantity)
+                    shopping_list.categories[item_name] = categories[item_name]
+                    save_shopping_list(shopping_list)
+                    message = f"✅ הוספתי {item_name} לרשימה עם הקטגוריה: {categories[item_name]}"
+                    await update.message.reply_text(message)
+                else:
+                    # אין קטגוריה קבועה, הוסף ואז שאל על קטגוריה
+                    shopping_list.add_item(item_name, quantity)
+                    save_shopping_list(shopping_list)
+                    context.user_data['current_item'] = item_name
+                    context.user_data['waiting_for_category'] = True
+                    await update.message.reply_text(f"✅ הוספתי {item_name} לרשימה!\nמה הקטגוריה של {item_name}?")
             else:
                 await update.message.reply_text(f"❌ {item_name} כבר קיים ברשימה")
         else:
@@ -277,8 +279,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     
     chat_id = update.effective_chat.id
-    shopping_list = context.user_data.get('shopping_list', load_shopping_list())
-    categories = context.user_data.get('categories', load_categories())
+    shopping_list = load_shopping_list()
+    categories = load_categories()
     
     if query.data.startswith("show_category_"):
         category = query.data.replace("show_category_", "")
@@ -309,7 +311,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # עדכון הקטגוריה בקבוע
         categories[item_name] = new_category
         save_categories(categories)
-        context.user_data['categories'] = categories
         
         # עדכון הקטגוריה בפריט
         if item_name in shopping_list.items:
@@ -320,7 +321,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # הוספת הפריט מחדש עם הקטגוריה החדשה
             shopping_list.add_item(item_name, current_quantity, category=new_category)
         
-        context.user_data['shopping_list'] = shopping_list
         save_shopping_list(shopping_list)
         
         await query.message.edit_text(f"✅ שיניתי את הקטגוריה של {item_name} ל-{new_category}")
@@ -332,7 +332,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # מחיקת הקטגוריה מהפריט
             del categories[item_name]
             save_categories(categories)
-            context.user_data['categories'] = categories
             
             # עדכון הפריט ברשימה
             if item_name in shopping_list.items:
@@ -340,7 +339,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 del shopping_list.items[item_name]
                 shopping_list.add_item(item_name, current_quantity)
             
-            context.user_data['shopping_list'] = shopping_list
             save_shopping_list(shopping_list)
             
             await query.message.edit_text(f"✅ מחקתי את הקטגוריה של {item_name}")
@@ -354,7 +352,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # הוספת הפריט
         shopping_list.add_item(item_name, quantity)
-        context.user_data['shopping_list'] = shopping_list
         save_shopping_list(shopping_list)
         
         await query.message.edit_text(f"✅ הוספתי {quantity} {item_name} לרשימה!")
