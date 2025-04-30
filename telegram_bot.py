@@ -12,8 +12,8 @@ load_dotenv()
 # קבלת טוקן הבוט ממשתנה הסביבה
 BOT_TOKEN = os.getenv('BOT_TOKEN')
 
-# קבלת מזהה המשתמש השני ממשתנה הסביבה
-PARTNER_CHAT_ID = os.getenv('PARTNER_CHAT_ID')
+# קבלת מזהי המשתמשים המורשים ממשתנה הסביבה (רשימה מופרדת בפסיק)
+PARTNER_CHAT_IDS = os.getenv('PARTNER_CHAT_ID', '').split(',')
 
 # טעינת רשימת הקניות מהקובץ או יצירת חדשה
 def load_shopping_list():
@@ -135,7 +135,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     save_chat_id(chat_id)
     
     # בדיקה אם המשתמש מורשה
-    if not is_authorized_user(user_id):
+    if str(chat_id) not in [id.strip() for id in PARTNER_CHAT_IDS if id.strip()]:
         await update.message.reply_text("❌ לא מורשה להשתמש בבוט.")
         return
 
@@ -370,7 +370,7 @@ def main():
         print("Error: BOT_TOKEN not found in environment variables")
         return
     
-    if not PARTNER_CHAT_ID:
+    if not PARTNER_CHAT_IDS:
         print("Error: PARTNER_CHAT_ID not found in environment variables")
         return
         
