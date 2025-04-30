@@ -122,26 +122,35 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text(welcome_message)
 
-# פונקציה לשליחת הודעת עדכון למשתמש השני
-async def notify_partner(application, message):
-    if PARTNER_CHAT_ID:
-        try:
-            await application.bot.send_message(chat_id=PARTNER_CHAT_ID, text=message)
-        except Exception as e:
-            print(f"Error sending notification to partner: {str(e)}")
-
 # פונקציה לטיפול בהודעות טקסט
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
-    text = update.message.text
-    shopping_list = context.user_data.get('shopping_list', load_shopping_list())
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """מטפל בהודעות טקסט"""
+    if not update.message or not update.message.text:
+        return
+
+    user_id = str(update.effective_user.id)
+    chat_id = str(update.effective_chat.id)
+    
+    # שמירת ה-chat_id של המשתמש
+    save_chat_id(chat_id)
+    
+    # בדיקה אם המשתמש מורשה
+    if not is_authorized_user(user_id):
+        await update.message.reply_text("❌ לא מורשה להשתמש בבוט.")
+        return
+
+    # בדיקה אם יש רשימת קניות פעילה
+    if 'shopping_list' not in context.user_data:
+        context.user_data['shopping_list'] = ShoppingList()
+
+    shopping_list = context.user_data['shopping_list']
     categories = context.user_data.get('categories', load_categories())
     
     try:
         # בדיקה אם זו תשובה לקטגוריה
         if context.user_data.get('waiting_for_category'):
             item_name = context.user_data['current_item']
-            category = text.strip()
+            category = update.message.text.strip()
             
             # שמירת הקטגוריה בקבוע
             categories[item_name] = category
@@ -149,7 +158,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data['categories'] = categories
             
             # עדכון הקטגוריה בפריט
-            shopping_list.add_item(item_name, quantity=1, category=category)
+            shopping_list.categories[item_name] = category
             context.user_data['shopping_list'] = shopping_list
             save_shopping_list(shopping_list)
             
@@ -159,11 +168,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             message = f"✅ שמרתי את הקטגוריה של {item_name} כ-{category}"
             await update.message.reply_text(message)
-            await notify_partner(context.application, f"👤 בן/בת הזוג שלך עדכנ/ה את הקטגוריה של {item_name} ל-{category}")
             return
 
         # בדיקה אם זו פקודה מיוחדת
-        if text.lower() in ['רשימה', 'הצג רשימה', 'הראה רשימה']:
+        if update.message.text.lower() in ['רשימה', 'הצג רשימה', 'הראה רשימה']:
             if not shopping_list.items:
                 await update.message.reply_text("📝 הרשימה ריקה")
                 return
@@ -176,15 +184,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(message, parse_mode='Markdown')
             return
         
-        elif text.lower() in ['מחק רשימה', 'נקה רשימה', 'אפס רשימה']:
+        elif update.message.text.lower() in ['מחק רשימה', 'נקה רשימה', 'אפס רשימה']:
             shopping_list.clear_list()
             save_shopping_list(shopping_list)
             message = "✅ הרשימה נוקתה בהצלחה!"
             await update.message.reply_text(message)
-            await notify_partner(context.application, "👤 בן/בת הזוג שלך ניקה את כל הרשימה!")
             return
         
-        elif text.lower() in ['קטגוריות', 'הצג קטגוריות', 'הראה קטגוריות']:
+        elif update.message.text.lower() in ['קטגוריות', 'הצג קטגוריות', 'הראה קטגוריות']:
             all_categories = set(categories.values())
             if not all_categories:
                 await update.message.reply_text("📝 אין קטגוריות מוגדרות")
@@ -196,7 +203,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
         
-        elif text.lower() in ['החלף קטגוריה', 'שנה קטגוריה', 'עדכן קטגוריה']:
+        elif update.message.text.lower() in ['החלף קטגוריה', 'שנה קטגוריה', 'עדכן קטגוריה']:
             if not shopping_list.items:
                 await update.message.reply_text("📝 הרשימה ריקה")
                 return
@@ -207,7 +214,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
         
-        elif text.lower() in ['מחק קטגוריה', 'הסר קטגוריה', 'הסר קטגוריות']:
+        elif update.message.text.lower() in ['מחק קטגוריה', 'הסר קטגוריה', 'הסר קטגוריות']:
             if not categories:
                 await update.message.reply_text("📝 אין קטגוריות מוגדרות")
                 return
@@ -217,70 +224,55 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=create_delete_categories_keyboard()
             )
             return
+
+        # בדיקה אם ההודעה מכילה קטגוריה
+        if ':' in update.message.text:
+            item_name, category = update.message.text.split(':', 1)
+            item_name = item_name.strip()
+            category = category.strip()
+            
+            # הוספת פריט עם קטגוריה
+            if item_name not in shopping_list.items:
+                shopping_list.add_item(item_name, 1)
+                shopping_list.categories[item_name] = category
+                save_shopping_list(shopping_list)
+                message = f"✅ הוספתי {item_name} לרשימה עם הקטגוריה: {category}"
+                await update.message.reply_text(message)
+            else:
+                await update.message.reply_text(f"❌ {item_name} כבר קיים ברשימה")
+            return
         
         # זיהוי פעולה
-        action = detect_action(text)
+        action = detect_action(update.message.text)
         
         # הסרת מילות פעולה מהטקסט
-        clean_text = re.sub(r'קניתי|קנית|קנו|קנתה|קנו|מחק|הסר|הסרתי|הסיר|קנה|קנתה', '', text, flags=re.IGNORECASE).strip()
+        clean_text = re.sub(r'קניתי|קנית|קנו|קנתה|קנו|מחק|הסר|הסרתי|הסיר|קנה|קנתה', '', update.message.text, flags=re.IGNORECASE).strip()
         
         if action == 'add':
             # הוספת פריט
             quantity = extract_quantity(clean_text)
-            item_name = re.sub(r'\d+', '', clean_text).strip()
+            item_name = clean_text.replace(str(quantity), '').strip()
             
-            if item_name:
-                if item_name in shopping_list.items:
-                    # אם הפריט כבר קיים, שואל את המשתמש אם להוסיף
-                    current_quantity = shopping_list.items[item_name]
-                    await update.message.reply_text(
-                        f"⚠️ {item_name} כבר קיים ברשימה ({current_quantity} יחידות).\n"
-                        f"האם להוסיף עוד {quantity} יחידות?",
-                        reply_markup=create_confirmation_keyboard(item_name, quantity)
-                    )
-                else:
-                    # אם הפריט לא קיים, מוסיף אותו ומבקש קטגוריה
-                    shopping_list.add_item(item_name, quantity)
-                    context.user_data['shopping_list'] = shopping_list
-                    save_shopping_list(shopping_list)
-                    
-                    # שמירת הפריט הנוכחי להמשך
-                    context.user_data['current_item'] = item_name
-                    
-                    # בדיקה אם יש קטגוריה קבועה לפריט
-                    if item_name in categories:
-                        category = categories[item_name]
-                        shopping_list.add_item(item_name, quantity, category=category)
-                        message = f"✅ הוספתי {quantity} {item_name} לרשימה!"
-                        await update.message.reply_text(message)
-                        await notify_partner(context.application, f"👤 בן/בת הזוג שלך הוסיף/ה {quantity} {item_name} לרשימה!")
-                    else:
-                        await update.message.reply_text(
-                            f"✅ הוספתי {quantity} {item_name} לרשימה!\n"
-                            f"מה הקטגוריה של {item_name}?"
-                        )
-                        context.user_data['waiting_for_category'] = True
-            else:
-                await update.message.reply_text("❌ לא הצלחתי להבין מה הפריט. נסה שוב.")
-        
-        else:  # remove
-            # מחיקת פריט
-            quantity = extract_quantity(clean_text)
-            item_name = re.sub(r'\d+', '', clean_text).strip()
-            
-            if item_name in shopping_list.items:
-                shopping_list.remove_item(item_name, quantity)
-                context.user_data['shopping_list'] = shopping_list
+            if item_name not in shopping_list.items:
+                shopping_list.add_item(item_name, quantity)
                 save_shopping_list(shopping_list)
-                message = f"✅ מחקתי {quantity} {item_name} מהרשימה!"
+                message = f"✅ הוספתי {item_name} לרשימה"
                 await update.message.reply_text(message)
-                await notify_partner(context.application, f"👤 בן/בת הזוג שלך מחק/ה {quantity} {item_name} מהרשימה!")
+            else:
+                await update.message.reply_text(f"❌ {item_name} כבר קיים ברשימה")
+        else:
+            # הסרת פריט
+            item_name = clean_text
+            if item_name in shopping_list.items:
+                shopping_list.remove_item(item_name)
+                save_shopping_list(shopping_list)
+                message = f"✅ הסרתי {item_name} מהרשימה"
+                await update.message.reply_text(message)
             else:
                 await update.message.reply_text(f"❌ {item_name} לא נמצא ברשימה")
-    
     except Exception as e:
-        await update.message.reply_text("❌ אירעה שגיאה. נסה שוב.")
-        print(f"Error: {str(e)}")
+        print(f"Error in handle_message: {str(e)}")
+        await update.message.reply_text("❌ אירעה שגיאה בעיבוד ההודעה. אנא נסה שוב.")
 
 # פונקציה לטיפול בלחיצות על כפתורים
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
