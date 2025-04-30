@@ -131,9 +131,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     user_id = str(update.effective_user.id)
     chat_id = str(update.effective_chat.id)
     
-    # שמירת ה-chat_id של המשתמש
-    save_chat_id(chat_id)
-    
     # בדיקה אם המשתמש מורשה
     if str(chat_id) not in [id.strip() for id in PARTNER_CHAT_IDS if id.strip()]:
         await update.message.reply_text("❌ לא מורשה להשתמש בבוט.")
