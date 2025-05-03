@@ -258,7 +258,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     context.user_data['waiting_for_category'] = True
                     await update.message.reply_text(f"✅ הוספתי {item_name} לרשימה!\nמה הקטגוריה של {item_name}?")
             else:
-                await update.message.reply_text(f"❌ {item_name} כבר קיים ברשימה")
+                # אם הפריט כבר קיים, שואל את המשתמש אם להוסיף
+                current_quantity = shopping_list.items[item_name]
+                await update.message.reply_text(
+                    f"⚠️ {item_name} כבר קיים ברשימה ({current_quantity} יחידות).\n"
+                    f"האם להוסיף עוד {quantity} יחידות?",
+                    reply_markup=create_confirmation_keyboard(item_name, quantity)
+                )
         else:
             # הסרת פריט
             item_name = clean_text
@@ -354,7 +360,18 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         shopping_list.add_item(item_name, quantity)
         save_shopping_list(shopping_list)
         
-        await query.message.edit_text(f"✅ הוספתי {quantity} {item_name} לרשימה!")
+        # בדיקה אם יש קטגוריה קבועה לפריט
+        if item_name in categories:
+            category = categories[item_name]
+            shopping_list.categories[item_name] = category
+            await query.message.edit_text(f"✅ הוספתי {quantity} {item_name} לרשימה עם הקטגוריה: {category}")
+        else:
+            await query.message.edit_text(
+                f"✅ הוספתי {quantity} {item_name} לרשימה!\n"
+                f"מה הקטגוריה של {item_name}?"
+            )
+            context.user_data['current_item'] = item_name
+            context.user_data['waiting_for_category'] = True
     
     elif query.data == "cancel_add":
         await query.message.edit_text("❌ ביטלתי את ההוספה.")
